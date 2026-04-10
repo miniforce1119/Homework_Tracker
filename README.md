@@ -124,6 +124,7 @@ Google Sheets 연결 완료
 | `/start` | 봇 시작 |
 | `/today` | 오늘 할일 보기 (버튼 포함) |
 | `/status` | 오늘 진행 상황 확인 |
+| `/catchup` | 밀린 숙제 보기 + 재체크 |
 | `/alpha` | 알파 포인트 확인 |
 
 ### 부모용
@@ -131,6 +132,7 @@ Google Sheets 연결 완료
 |--------|------|
 | `/start` | 봇 시작 |
 | `/today` | 모든 아이의 할일 보기 (버튼 없이 현황만) |
+| `/catchup` | 밀린 숙제 현황 보기 |
 | `/summary` | 오늘 전체 요약 |
 | `/week` | 이번 주 통계 |
 | `/alpha` | 모든 아이의 알파 포인트 확인 |
@@ -141,6 +143,37 @@ Google Sheets 연결 완료
 3. 봇이 "메모를 입력해줘:" 메시지 전송
 4. 텍스트로 메모 입력 (책이름, 페이지, 점수 등)
 5. 메모가 Sheets에 저장되고 메시지에 표시
+
+---
+
+## 밀린 숙제 (`/catchup`)
+
+주중에 못한 숙제를 주말에 채워서 할 수 있는 기능입니다.
+
+### 동작 방식
+1. 아이가 `/catchup` 입력
+2. 이번 주 월~어제 중 **미응답/못함** 항목만 필터링하여 표시
+3. 각 항목에 [✅완료] [△부분] 버튼 제공
+4. 버튼 탭 → **원래 날짜의 Sheets 데이터가 업데이트** (새 행이 아닌 덮어쓰기)
+5. 메모 추가도 가능
+
+### 예시
+```
+📋 지후의 밀린 숙제 — 3개
+
+[월] 국어 — 비문학 (국풀 나라샤) — 🔇미응답
+[✅완료] [△부분]
+
+[화] 사회 — 교과내신 (평가서, 자습서) — ✗못함
+[✅완료] [△부분]
+
+[수] 수학 — 학원숙제 — 🔇미응답
+[✅완료] [△부분]
+```
+
+### 알파 포인트 연동
+- 일요일 21:30 알파 계산 **전에** catchup으로 채우면 알파에 반영됨
+- Sheets 규칙: "해당 주 분량을 주말 활용해서 완료하면 알파 획득 가능"
 
 ---
 
@@ -237,17 +270,25 @@ Google Sheets 연결 완료
 
 ```
 homework-bot/
-├── bot.py              ← 메인 봇 (Telegram + 스케줄러)
-├── sheets_client.py    ← Google Sheets 읽기/쓰기 + 알파 계산
+├── bot.py              ← 메인 봇 (Telegram + 스케줄러 + 명령어 핸들러)
+├── sheets_client.py    ← Google Sheets 읽기/쓰기 + 알파 계산 + 밀린 숙제 조회
 ├── config.py           ← 환경변수 설정
-├── .env                ← 비밀키 (Token, Chat ID 등)
+├── get_chat_id.py      ← Chat ID 확인용 스크립트 (세팅 시 사용)
+├── .env                ← 비밀키 (Token, Chat ID 등) — Git 제외
 ├── .env.example        ← 환경변수 템플릿
-├── credentials.json    ← Google 서비스 계정 인증 (비공개)
+├── credentials.json    ← Google 서비스 계정 인증 — Git 제외
 ├── requirements.txt    ← Python 패키지
 ├── .gitignore          ← .env, credentials.json 제외
 ├── Procfile            ← 서버 배포용
 └── README.md           ← 이 파일
 ```
+
+### 다른 PC에서 실행 시
+1. `git clone https://github.com/miniforce1119/Homework_Tracker.git`
+2. `.env` 파일을 `.env.example` 참고하여 생성
+3. `credentials.json`을 Google Cloud Console에서 다운로드하거나, 기존 PC에서 복사
+4. `pip install -r requirements.txt`
+5. `python bot.py`
 
 ---
 
