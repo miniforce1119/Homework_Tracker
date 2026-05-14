@@ -1,0 +1,15 @@
+[Unit]
+Description=Homework Tracker Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/home/__USER__/homework-bot
+ExecStart=/home/__USER__/homework-bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
