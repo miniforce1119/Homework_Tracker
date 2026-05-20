@@ -46,7 +46,7 @@ def build_task_message(child_name: str, tasks: list[dict], results: dict) -> tup
     for i, task in enumerate(tasks):
         result = results.get(i)
         if result:
-            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇"}.get(result, "❓")
+            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇", "NA": "⛔"}.get(result, "❓")
             text += f"{emoji} {i + 1}. {task['label']}\n"
             # 이미 체크된 항목은 버튼 비활성화 표시
             keyboard.append(
@@ -61,6 +61,7 @@ def build_task_message(child_name: str, tasks: list[dict], results: dict) -> tup
                     InlineKeyboardButton("✅완료", callback_data=f"{child_id}:{i}:c"),
                     InlineKeyboardButton("△부분", callback_data=f"{child_id}:{i}:p"),
                     InlineKeyboardButton("✗못함", callback_data=f"{child_id}:{i}:f"),
+                    InlineKeyboardButton("NA", callback_data=f"{child_id}:{i}:n"),
                 ]
             )
 
@@ -196,7 +197,7 @@ async def cmd_status(update: Update, context):
 
         text = f"📊 {child_name} 진행 상황 ({now.month}월 {now.day}일)\n\n"
         for r in results:
-            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗"}.get(r["결과"], "❓")
+            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "NA": "⛔"}.get(r["결과"], "❓")
             text += f"{emoji} {r['과목']} — {r['세부항목']}"
             if r["메모"]:
                 text += f" 💬{r['메모']}"
@@ -338,6 +339,7 @@ async def cmd_catchup(update: Update, context):
                 keyboard = InlineKeyboardMarkup([[
                     InlineKeyboardButton("✅완료", callback_data=f"cu:{child_id}:{i}:{date_short}:c"),
                     InlineKeyboardButton("△부분", callback_data=f"cu:{child_id}:{i}:{date_short}:p"),
+                    InlineKeyboardButton("NA", callback_data=f"cu:{child_id}:{i}:{date_short}:n"),
                 ]])
 
             msg = await context.bot.send_message(
@@ -370,9 +372,9 @@ async def handle_callback(update: Update, context):
         child_name = _id_to_child_name(child_id)
         original_date = f"{now.year}-{date_short}"  # "2026-04-08"
 
-        result_map = {"c": "완료", "p": "부분완료"}
+        result_map = {"c": "완료", "p": "부분완료", "n": "NA"}
         result_text = result_map.get(result_code, "완료")
-        result_emoji = {"c": "✅", "p": "△"}.get(result_code, "❓")
+        result_emoji = {"c": "✅", "p": "△", "n": "⛔"}.get(result_code, "❓")
 
         state_key = (chat_id, f"catchup_{child_name}")
         state = daily_state.get(state_key)
@@ -468,9 +470,9 @@ async def handle_callback(update: Update, context):
         return
 
     child_name = _id_to_child_name(child_id)
-    result_map = {"c": "완료", "p": "부분완료", "f": "못함"}
+    result_map = {"c": "완료", "p": "부분완료", "f": "못함", "n": "NA"}
     result_text = result_map.get(result_code, "완료")
-    result_emoji = {"c": "✅", "p": "△", "f": "✗"}.get(result_code, "❓")
+    result_emoji = {"c": "✅", "p": "△", "f": "✗", "n": "⛔"}.get(result_code, "❓")
 
     # 인메모리 상태 업데이트 (chat_id + child_name 조합)
     state_key = (chat_id, child_name)
@@ -545,7 +547,7 @@ async def handle_message(update: Update, context):
         state = daily_state.get(state_key)
         if state:
             result = state["results"].get(task_idx, "완료")
-            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇"}.get(result, "❓")
+            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇", "NA": "⛔"}.get(result, "❓")
             total = len(state["tasks"])
             updated_text = f"{emoji} {task_idx+1}/{total}  {task['label']} — {result}\n💬 {memo_text}"
             try:
@@ -616,7 +618,7 @@ async def _send_tasks_to_chat(
     for i, task in enumerate(tasks):
         result = results.get(i)
         if result:
-            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇"}.get(result, "❓")
+            emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇", "NA": "⛔"}.get(result, "❓")
             text = f"{emoji} {i+1}/{total}  {task['label']} — {result}"
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton(f"{emoji} {result}", callback_data="noop"),
@@ -630,6 +632,7 @@ async def _send_tasks_to_chat(
                 InlineKeyboardButton("✅완료", callback_data=f"{child_id}:{i}:c"),
                 InlineKeyboardButton("△부분", callback_data=f"{child_id}:{i}:p"),
                 InlineKeyboardButton("✗못함", callback_data=f"{child_id}:{i}:f"),
+                InlineKeyboardButton("NA", callback_data=f"{child_id}:{i}:n"),
             ]])
 
         msg = await context.bot.send_message(
@@ -662,7 +665,7 @@ async def _send_child_summary_to_parent(context, child_name: str, date_str: str)
     now = datetime.now(KST)
     text = f"📊 {child_name} 완료 ({now.month}월 {now.day}일)\n\n"
     for r in results:
-        emoji = {"완료": "✅", "부분완료": "△", "못함": "✗"}.get(r["결과"], "❓")
+        emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "NA": "⛔"}.get(r["결과"], "❓")
         text += f"{emoji} {r['과목']} — {r['세부항목']}"
         if r["메모"]:
             text += f"\n   💬 {r['메모']}"
@@ -699,7 +702,7 @@ async def _send_parent_summary(context, record_no_response: bool = False):
             key = (task["과목"], task["세부항목"])
             if key in checked_details:
                 r = checked_details[key]
-                emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇"}.get(r["결과"], "❓")
+                emoji = {"완료": "✅", "부분완료": "△", "못함": "✗", "미응답": "🔇", "NA": "⛔"}.get(r["결과"], "❓")
                 text += f"  {emoji} {task['label']}"
                 if r["메모"]:
                     text += f" 💬{r['메모']}"
@@ -744,6 +747,58 @@ async def scheduled_parent_summary(context):
         await _send_parent_summary(context, record_no_response=True)
     except Exception as e:
         logger.error(f"부모 요약 전송 실패: {e}")
+
+    # 목요일이면 지난주 알파 리마인드 추가 전송
+    now = datetime.now(KST)
+    if now.weekday() == 3:  # 0=월, 3=목
+        logger.info("스케줄: 목요일 알파 리마인드 전송")
+        try:
+            await _send_alpha_reminder(context)
+        except Exception as e:
+            logger.error(f"알파 리마인드 전송 실패: {e}")
+
+
+async def _send_alpha_reminder(context):
+    """지난주 알파 결과를 리마인드로 전송 (목요일용)"""
+    now = datetime.now(KST)
+
+    # 지난주 월~일 날짜 계산
+    this_monday = now - timedelta(days=now.weekday())
+    last_monday = this_monday - timedelta(days=7)
+    last_week_start = last_monday.strftime("%Y-%m-%d")
+
+    for child_name in Config.CHILDREN:
+        try:
+            cumulative = sheets.get_cumulative_alpha(child_name)
+
+            # 지난주 기록 찾기
+            last_week_record = None
+            for w in cumulative["weeks"]:
+                if w["시작일"] == last_week_start:
+                    last_week_record = w
+                    break
+
+            if not last_week_record:
+                continue
+
+            sign = "+" if last_week_record["점수"] >= 0 else ""
+            text = f"🔔 {child_name} 알파 리마인드 (금요일 게임시간 확인용)\n\n"
+            text += f"📅 지난주: {sign}{last_week_record['점수']}분\n"
+            text += f"🏆 누적 점수: {cumulative['total']}분\n"
+
+            # 부모에게 전송
+            await _send_to_parents(context, text)
+
+            # 아이(와이프 계정) 에게도 전송
+            child_chat_id = Config.CHILDREN.get(child_name)
+            if child_chat_id and child_chat_id != 0:
+                try:
+                    await context.bot.send_message(chat_id=child_chat_id, text=text)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            logger.error(f"  {child_name} 알파 리마인드 실패: {e}")
 
 
 async def scheduled_weekly_alpha(context):
@@ -850,7 +905,8 @@ def main():
     logger.info(
         f"스케줄 등록: 할일 전송 {Config.TASK_SEND_HOUR}:{Config.TASK_SEND_MINUTE:02d}, "
         f"부모 요약 {Config.SUMMARY_HOUR}:{Config.SUMMARY_MINUTE:02d}, "
-        f"알파 계산 일요일 21:30"
+        f"알파 계산 일요일 21:30, "
+        f"알파 리마인드 목요일 {Config.SUMMARY_HOUR}:{Config.SUMMARY_MINUTE:02d}"
     )
 
     # 봇 실행

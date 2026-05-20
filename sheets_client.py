@@ -376,10 +376,12 @@ class SheetsClient:
         m = re.search(r"주(\d+)회\s*모두\s*O\s*일때\s*(\d+)분.*아니면\s*-(\d+)분", rule)
         if m:
             required = int(m.group(1))
+            # NA 횟수를 반영: expected_count가 줄어들면 required도 줄임
+            effective_required = min(required, expected_count)
             reward = int(m.group(2))
             penalty = int(m.group(3))
-            if completed_count >= required:
-                return reward, f"주{required}회 달성 → +{reward}분"
+            if completed_count >= effective_required:
+                return reward, f"주{required}회 중 {effective_required}회 필요, {completed_count}회 달성 → +{reward}분" if effective_required != required else f"주{required}회 달성 → +{reward}분"
             else:
                 return -penalty, f"주{required}회 중 {completed_count}회만 완료 → -{penalty}분"
 
@@ -387,9 +389,10 @@ class SheetsClient:
         m = re.search(r"주(\d+)회\s*모두\s*O\s*일때\s*(\d+)분", rule)
         if m:
             required = int(m.group(1))
+            effective_required = min(required, expected_count)
             reward = int(m.group(2))
-            if completed_count >= required:
-                return reward, f"주{required}회 달성 → +{reward}분"
+            if completed_count >= effective_required:
+                return reward, f"주{required}회 중 {effective_required}회 필요, {completed_count}회 달성 → +{reward}분" if effective_required != required else f"주{required}회 달성 → +{reward}분"
             else:
                 return 0, f"주{required}회 중 {completed_count}회 완료 → 0분"
 
@@ -397,11 +400,12 @@ class SheetsClient:
         m = re.search(r"주(\d+)회\s*모두\s*입력값이\s*있을때\s*(\d+)분.*아니면\s*-(\d+)분", rule)
         if m:
             required = int(m.group(1))
+            effective_required = min(required, expected_count)
             reward = int(m.group(2))
             penalty = int(m.group(3))
             memo_count = sum(1 for memo in memos if memo.strip())
-            if memo_count >= required:
-                return reward, f"주{required}회 입력 달성 → +{reward}분"
+            if memo_count >= effective_required:
+                return reward, f"주{required}회 중 {effective_required}회 필요, {memo_count}회 입력 달성 → +{reward}분" if effective_required != required else f"주{required}회 입력 달성 → +{reward}분"
             else:
                 return -penalty, f"주{required}회 중 {memo_count}회 입력 → -{penalty}분"
 
@@ -470,16 +474,20 @@ class SheetsClient:
         total_alpha = 0
 
         for rule in rules:
-            # 이 항목의 주간 완료 횟수
+            # 이 항목의 주간 완료 횟수 (NA는 제외)
             matching = [
                 r for r in all_results
                 if r["과목"] == rule["과목"] and r["세부항목"] == rule["세부항목"]
             ]
+            na_count = sum(1 for r in matching if r["결과"] == "NA")
             completed_count = sum(1 for r in matching if r["결과"] == "완료")
-            memos = [r.get("메모", "") for r in matching]
+            memos = [r.get("메모", "") for r in matching if r["결과"] != "NA"]
+
+            # NA 횟수만큼 기대 횟수를 줄임
+            adjusted_expected = max(0, rule["expected_count"] - na_count)
 
             score, reason = self._parse_alpha_rule(
-                rule["rule"], completed_count, rule["expected_count"], memos
+                rule["rule"], completed_count, adjusted_expected, memos
             )
 
             total_alpha += score
