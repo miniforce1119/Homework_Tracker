@@ -369,8 +369,13 @@ class SheetsClient:
         return rules
 
     def _parse_alpha_rule(self, rule: str, completed_count: int,
-                          expected_count: int, memos: list[str]) -> tuple[int, str]:
-        """알파 규칙을 파싱하여 점수와 사유 반환"""
+                          expected_count: int, memos: list[str],
+                          finalize: bool = True) -> tuple[int, str]:
+        """알파 규칙을 파싱하여 점수와 사유 반환.
+
+        finalize=False(주중 라이브 계산): 임계 미달 페널티(-M분)는 보류(0).
+        보상/복구분만 즉시 반영하고, 페널티는 일요일 정규 계산(finalize=True)에서 확정.
+        """
 
         # 패턴1: "주N회 모두 O 일때 5분, 아니면 -5분"
         m = re.search(r"주(\d+)회\s*모두\s*O\s*일때\s*(\d+)분.*아니면\s*-(\d+)분", rule)
@@ -383,6 +388,8 @@ class SheetsClient:
             if completed_count >= effective_required:
                 return reward, f"주{required}회 중 {effective_required}회 필요, {completed_count}회 달성 → +{reward}분" if effective_required != required else f"주{required}회 달성 → +{reward}분"
             else:
+                if not finalize:
+                    return 0, f"주{required}회 중 {completed_count}회 (페널티 일요일 확정 보류)"
                 return -penalty, f"주{required}회 중 {completed_count}회만 완료 → -{penalty}분"
 
         # 패턴2: "주N회 모두 O 일때 5분" (벌점 없음)
@@ -407,7 +414,27 @@ class SheetsClient:
             if memo_count >= effective_required:
                 return reward, f"주{required}회 중 {effective_required}회 필요, {memo_count}회 입력 달성 → +{reward}분" if effective_required != required else f"주{required}회 입력 달성 → +{reward}분"
             else:
+                if not finalize:
+                    return 0, f"주{required}회 중 {memo_count}회 입력 (페널티 일요일 확정 보류)"
                 return -penalty, f"주{required}회 중 {memo_count}회 입력 → -{penalty}분"
+
+        # 패턴6: "0이 입력될때마다 5분씩 추가, 아니면 -5분"
+        # ⚠️ 반드시 패턴4보다 먼저 검사 — 패턴4 정규식(입력될때마다 N분씩 추가)이
+        #    이 규칙의 부분 문자열에도 매칭되어 패턴6을 가려버리기 때문.
+        m = re.search(r"0이\s*입력될때마다\s*(\d+)분씩\s*추가.*아니면\s*-(\d+)분", rule)
+        if m:
+            reward_per = int(m.group(1))
+            penalty = int(m.group(2))
+            zero_count = sum(1 for memo in memos if memo.strip() == "0")
+            non_zero = sum(1 for memo in memos if memo.strip() and memo.strip() != "0")
+            if not finalize:
+                # 주중 라이브: 0점 보상만 반영, 기타값 페널티는 일요일 확정 보류
+                return zero_count * reward_per, f"0점 {zero_count}회(+{zero_count * reward_per}분), 페널티 일요일 확정 보류"
+            total = (zero_count * reward_per) - (non_zero * penalty)
+            detail = f"0점 {zero_count}회(+{zero_count * reward_per}분)"
+            if non_zero > 0:
+                detail += f", 기타 {non_zero}회(-{non_zero * penalty}분)"
+            return total, detail
 
         # 패턴4: "책 이름이 입력될때마다 5분씩 추가"
         m = re.search(r"입력될때마다\s*(\d+)분씩\s*추가", rule)
@@ -430,19 +457,6 @@ class SheetsClient:
             else:
                 return 0, "입력 없음 → 0분"
 
-        # 패턴6: "0이 입력될때마다 5분씩 추가, 아니면 -5분"
-        m = re.search(r"0이\s*입력될때마다\s*(\d+)분씩\s*추가.*아니면\s*-(\d+)분", rule)
-        if m:
-            reward_per = int(m.group(1))
-            penalty = int(m.group(2))
-            zero_count = sum(1 for memo in memos if memo.strip() == "0")
-            non_zero = sum(1 for memo in memos if memo.strip() and memo.strip() != "0")
-            total = (zero_count * reward_per) - (non_zero * penalty)
-            detail = f"0점 {zero_count}회(+{zero_count * reward_per}분)"
-            if non_zero > 0:
-                detail += f", 기타 {non_zero}회(-{non_zero * penalty}분)"
-            return total, detail
-
         # 패턴7: "시험 점수가 90 이상일때 5분"
         m = re.search(r"시험\s*점수가\s*(\d+)\s*이상일때\s*(\d+)분", rule)
         if m:
@@ -456,19 +470,34 @@ class SheetsClient:
 
         return 0, f"규칙 미인식: {rule}"
 
-    def calculate_weekly_alpha(self, child_name: str, week_dates: list[str]) -> dict:
-        """주간 알파 포인트 계산"""
+    def calculate_weekly_alpha(self, child_name: str, week_dates: list[str],
+                               finalize: bool = True) -> dict:
+        """주간 알파 포인트 계산.
+
+        finalize=True(일요일 정규 계산): 페널티 포함 최종 점수.
+        finalize=False(주중 라이브 계산): 보상/복구분만, 임계 페널티는 보류.
+        """
         rules = self._get_alpha_rules(child_name)
         if not rules:
             return {"total": 0, "details": [], "rules_count": 0}
 
-        # 해당 주의 모든 결과 가져오기
+        # 해당 주의 모든 결과를 한 번에 읽기 (시트 호출 최소화)
+        ws = self._ensure_result_sheet(child_name)
+        existing = ws.get_all_values()
+        date_set = set(week_dates)
         all_results = []
-        for date_str in week_dates:
-            results = self.get_daily_results(child_name, date_str)
-            for r in results:
-                r["날짜"] = date_str
-            all_results.extend(results)
+        for i, row in enumerate(existing):
+            if i == 0:
+                continue
+            if len(row) >= 5 and row[0] in date_set:
+                all_results.append({
+                    "과목": row[1],
+                    "세부항목": row[2],
+                    "교재명": row[3],
+                    "결과": row[4],
+                    "메모": row[5] if len(row) > 5 else "",
+                    "날짜": row[0],
+                })
 
         details = []
         total_alpha = 0
@@ -487,7 +516,8 @@ class SheetsClient:
             adjusted_expected = max(0, rule["expected_count"] - na_count)
 
             score, reason = self._parse_alpha_rule(
-                rule["rule"], completed_count, adjusted_expected, memos
+                rule["rule"], completed_count, adjusted_expected, memos,
+                finalize=finalize,
             )
 
             total_alpha += score
@@ -557,4 +587,31 @@ class SheetsClient:
         return {
             "total": total,
             "weeks": weeks,
+        }
+
+    def _get_stored_week_total(self, child_name: str, week_start: str) -> int:
+        """알파점수 시트에 저장된 특정 주차 점수 조회 (없으면 0)"""
+        ws = self._ensure_alpha_sheet()
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows):
+            if i == 0:
+                continue
+            if len(row) >= 4 and row[0] == child_name and row[2] == week_start:
+                return int(row[3]) if row[3].lstrip("-").isdigit() else 0
+        return 0
+
+    def recalc_live_alpha(self, child_name: str, week_dates: list[str],
+                          week_start: str) -> dict:
+        """이번 주 알파를 라이브(페널티 보류)로 재계산해 저장하고 증가분을 반환.
+
+        일요일 정규 계산은 같은 결과 시트를 읽어 같은 행을 멱등 덮어쓰므로 이중집계 없음.
+        반환: {"old": 이전 저장 점수, "new": 새 점수, "delta": 증가분}
+        """
+        old_total = self._get_stored_week_total(child_name, week_start)
+        result = self.calculate_weekly_alpha(child_name, week_dates, finalize=False)
+        self.save_weekly_alpha(child_name, week_start, result)
+        return {
+            "old": old_total,
+            "new": result["total"],
+            "delta": result["total"] - old_total,
         }

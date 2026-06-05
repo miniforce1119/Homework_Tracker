@@ -123,6 +123,40 @@ async def _send_to_parents(context_or_bot, text: str):
             logger.error(f"부모 메시지 전송 실패 (chat_id={chat_id}): {e}")
 
 
+def _this_week_dates() -> tuple[list[str], str]:
+    """이번 주 월~일 날짜 리스트와 시작일(월요일) 반환"""
+    now = datetime.now(KST)
+    monday = now - timedelta(days=now.weekday())
+    dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    return dates, dates[0]
+
+
+async def _credit_game_time(context, chat_id: int, child_name: str, restored: bool = False) -> int:
+    """이번 주 알파(게임시간)를 라이브 재계산하고, 증가분이 있으면 즉시 알림.
+
+    restored=True면 '복구'(catchup), False면 '추가'(책이름 등 입력 보상)로 안내.
+    페널티는 일요일 정규 계산에서만 확정되므로 여기선 증가분만 노출된다.
+    """
+    try:
+        week_dates, week_start = _this_week_dates()
+        res = sheets.recalc_live_alpha(child_name, week_dates, week_start)
+    except Exception as e:
+        logger.error(f"라이브 알파 재계산 실패 ({child_name}): {e}")
+        return 0
+
+    delta = res["delta"]
+    if delta > 0:
+        verb = "복구" if restored else "추가"
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🎮 게임시간 +{delta}분 {verb}! (이번 주 누적 {res['new']}분)",
+            )
+        except Exception as e:
+            logger.error(f"게임시간 알림 전송 실패: {e}")
+    return delta
+
+
 # ─── 명령어 핸들러 ──────────────────────────────────────────
 
 async def cmd_start(update: Update, context):
@@ -400,6 +434,10 @@ async def handle_callback(update: Update, context):
         ]])
         await query.answer(f"{result_emoji} {task['과목']} {result_text}!")
         await query.edit_message_text(text=checked_text, reply_markup=checked_keyboard)
+
+        # 밀린 숙제 완료 → 이번 주 게임시간 즉시 복구 알림
+        if result_code in ("c", "p"):
+            await _credit_game_time(context, chat_id, child_name, restored=True)
         return
 
     # catchup 메모 버튼 처리: "cum:child_id:idx:date_short"
@@ -558,6 +596,9 @@ async def handle_message(update: Update, context):
                 )
             except Exception:
                 pass  # 메시지 수정 실패해도 메모는 이미 저장됨
+
+        # 책이름 등 입력 기반 알파(게임시간) 즉시 적립 알림
+        await _credit_game_time(context, chat_id, child_name, restored=False)
 
     except Exception as e:
         logger.error(f"메모 저장 실패: {e}")
